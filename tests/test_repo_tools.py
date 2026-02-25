@@ -127,3 +127,15 @@ def test_docanalyst_node(tmp_path):
     state = {"pdf_path": str(pdf)}
     ev = DocAnalyst(state)
     assert isinstance(ev.found, bool)
+
+
+def test_build_detective_graph_structure():
+    from src.graph import build_detective_graph
+
+    g = build_detective_graph()
+    # verify fan-out from START
+    outgoing = [e for e in g.edges if e[0] == "START"]
+    assert len(outgoing) >= 3
+    # check aggregator presence
+    nodes = [n for n in g.nodes]
+    assert "EvidenceAggregator" in nodes
