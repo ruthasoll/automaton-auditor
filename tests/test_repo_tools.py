@@ -41,3 +41,43 @@ def test_safe_clone_repo_failure(monkeypatch):
     monkeypatch.setattr("subprocess.run", fake_run)
     with pytest.raises(RepoCloneError):
         safe_clone_repo("https://invalid/url")
+
+
+def test_extract_git_history(tmp_path):
+    # create a temporary git repository with a couple commits
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=repo_dir, check=True)
+    # make two commits
+    for i in range(2):
+        f = repo_dir / f"file{i}.txt"
+        f.write_text("hello")
+        subprocess.run(["git", "add", str(f)], cwd=repo_dir, check=True)
+        subprocess.run(["git", "commit", "-m", f"commit {i}"], cwd=repo_dir, check=True)
+    from src.tools.repo_tools import extract_git_history
+
+    count, commits = extract_git_history(repo_dir)
+    assert count == 2
+    assert commits[0]["message"].startswith("commit 0")
+
+
+def test_analyze_graph_structure_simple():
+    code = '''
+from some import StateGraph
+
+g = StateGraph()
+g.add_node("START")
+g.add_node("A")
+g.add_node("Aggregator")
+g.add_edge("START", "A")
+g.add_edge("START", "B")
+g.add_conditional_edges("A", ["C", "D"])
+'''
+    from src.tools.repo_tools import analyze_graph_structure
+
+    info = analyze_graph_structure(code)
+    assert info["found_stategraph"]
+    assert "START" in info["nodes"]
+    assert info["fan_out_from_start"]
+    assert info["has_aggregator"]
+    assert info["has_conditional"]
