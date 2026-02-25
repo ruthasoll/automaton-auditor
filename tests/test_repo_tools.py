@@ -86,3 +86,56 @@ g.add_conditional_edges("A", ["C", "D"])
     assert info["fan_out_from_start"]
     assert info["has_aggregator"]
     assert info["has_conditional"]
+
+
+def test_repoinvestigator_node(tmp_path, monkeypatch):
+    """Ensure RepoInvestigator returns appropriate Evidence objects."""
+    from src.nodes import RepoInvestigator
+
+    # missing repo_url
+    state = {"repo_url": ""}
+    ev = RepoInvestigator(state)
+    assert not ev.found
+
+    # simulate successful clone and history
+    def fake_clone(url):
+        return tmp_path, True
+
+    monkeypatch.setattr("src.tools.repo_tools.safe_clone_repo", fake_clone)
+
+    def fake_history(path):
+        return 1, [{"hash": "abc", "message": "init"}]
+
+    monkeypatch.setattr("src.tools.repo_tools.extract_git_history", fake_history)
+    state = {"repo_url": "https://example.com/repo.git"}
+    ev = RepoInvestigator(state)
+    assert ev.found
+    assert "1 commits" in (ev.content or "")
+
+
+def test_docanalyst_node(tmp_path):
+    from src.nodes import DocAnalyst
+
+    # missing pdf_path
+    state = {"pdf_path": ""}
+    ev = DocAnalyst(state)
+    assert not ev.found
+
+    # create a minimal (invalid) pdf for parsing
+    pdf = tmp_path / "empty.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF")
+    state = {"pdf_path": str(pdf)}
+    ev = DocAnalyst(state)
+    assert isinstance(ev.found, bool)
+
+
+def test_build_detective_graph_structure():
+    from src.graph import build_detective_graph
+
+    g = build_detective_graph()
+    # verify fan-out from START
+    outgoing = [e for e in g.edges if e[0] == "START"]
+    assert len(outgoing) >= 3
+    # check aggregator presence
+    nodes = [n for n in g.nodes]
+    assert "EvidenceAggregator" in nodes
