@@ -1,87 +1,145 @@
 from pathlib import Path
 import tempfile
-from typing import List, Tuple
+import logging
+from typing import Dict, List, Optional
 
-# import libraries lazily so that the module can be imported even if some
-# dependencies are missing; functions will raise at runtime if necessary.
+# Lazy imports for optional dependencies
 try:
     from pypdf import PdfReader
-except ImportError:  # pragma: no cover - allow tests to import without pypdf
-    PdfReader = None  # type: ignore
+except ImportError:  # pragma: no cover
+    PdfReader = None
 
 try:
     import fitz  # pymupdf
-except ImportError:  # pragma: no cover - tests will skip if not available
-    fitz = None  # type: ignore
+except ImportError:  # pragma: no cover
+    fitz = None
+
+logger = logging.getLogger(__name__)
 
 
 class PDFExtractionError(Exception):
-    """Raised when PDF extraction fails for any reason."""
+    """Raised when critical PDF text extraction fails."""
 
 
+def chunk_text(text: str, max_chunk_size: int = 800) -> List[Dict[str, str]]:
+    """Split text into chunks respecting paragraph boundaries."""
+    if not text.strip():
+        return []
 
-def extract_pdf_text_and_images(pdf_path: Path) -> Tuple[str, List[Path]]:
-    """Extract text and images from a PDF file.
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    chunks = []
+    current = ""
+    chunk_index = 1
 
-    Text is read using :class:`pypdf.PdfReader`. Images are extracted with
-    ``pymupdf`` (``fitz``) if available; up to five images are written to a
-    temporary directory and their paths returned. The temporary directory is
-    created via :func:`tempfile.mkdtemp` and not automatically removed – callers
-    may discard it when finished.
+    for para in paragraphs:
+        if len(current) + len(para) + 2 <= max_chunk_size:
+            current += para + "\n\n"
+        else:
+            if current:
+                chunks.append({
+                    "text": current.strip(),
+                    "chunk_index": chunk_index
+                })
+                chunk_index += 1
+            current = para + "\n\n"
 
-    Parameters
-    ----------
-    pdf_path : Path
-        Path to the PDF file to inspect.
+    if current:
+        chunks.append({
+            "text": current.strip(),
+            "chunk_index": chunk_index
+        })
 
-    Returns
-    -------
-    Tuple[str, List[Path]]
-        A tuple containing the full extracted text and a list of paths to
-        image files extracted from the PDF.
+    return chunks
 
-    Raises
-    ------
-    PDFExtractionError
-        If any step of the extraction process fails.
+
+def extract_pdf_content(pdf_path: Path) -> Dict[str, any]:
     """
-    if not pdf_path.exists():
-        raise PDFExtractionError(f"PDF path does not exist: {pdf_path}")
+    Extract text, chunks, and images from PDF.
 
-    # extract text
+    Returns:
+    {
+        "full_text": str,
+        "chunks": List[Dict["text": str, "chunk_index": int]],
+        "image_paths": List[Path],
+        "temp_dir": Optional[Path],          # caller should clean up
+        "success": bool,
+        "errors": List[str]
+    }
+    """
+    if not pdf_path.exists() or not pdf_path.is_file():
+        return {
+            "full_text": "",
+            "chunks": [],
+            "image_paths": [],
+            "temp_dir": None,
+            "success": False,
+            "errors": [f"Invalid PDF path: {pdf_path}"]
+        }
+
+    result: Dict[str, any] = {
+        "full_text": "",
+        "chunks": [],
+        "image_paths": [],
+        "temp_dir": None,
+        "success": False,
+        "errors": []
+    }
+
+    # Text extraction (critical)
     if PdfReader is None:
-        raise PDFExtractionError("pypdf is not installed; cannot read PDF text")
+        result["errors"].append("pypdf not installed")
+        return result
+
     try:
         reader = PdfReader(str(pdf_path))
-        text_parts: List[str] = []
-        for page in reader.pages:
-            text_parts.append(page.extract_text() or "")
-        full_text = "\n".join(text_parts)
+        text_parts = [page.extract_text() or "" for page in reader.pages]
+        result["full_text"] = "\n".join(text_parts).strip()
+        result["chunks"] = chunk_text(result["full_text"])
     except Exception as exc:
-        raise PDFExtractionError(f"Failed to read PDF text: {exc}")
+        result["errors"].append(f"Text extraction failed: {exc}")
+        return result
 
-    images: List[Path] = []
+    # Image extraction (optional)
     if fitz is not None:
         try:
             doc = fitz.open(str(pdf_path))
-            tmp_dir = Path(tempfile.mkdtemp(prefix="pdf_images_"))
-            # iterate pages, grab images until we hit 5
+            tmp_dir = Path(tempfile.mkdtemp(prefix="audit_pdf_images_"))
+            result["temp_dir"] = tmp_dir
+
+            image_count = 0
             for page in doc:
-                for img_index, img in enumerate(page.get_images(full=True)):
-                    if len(images) >= 5:
+                if image_count >= 5:
+                    break
+                for img_idx, img in enumerate(page.get_images(full=True)):
+                    if image_count >= 5:
                         break
                     xref = img[0]
-                    base_image = doc.extract_image(xref)
-                    ext = base_image.get("ext", "png")
-                    data = base_image.get("image")
-                    if data is None:
+                    base_img = doc.extract_image(xref)
+                    if base_img is None or base_img.get("image") is None:
                         continue
-                    out_path = tmp_dir / f"image_{page.number}_{img_index}.{ext}"
-                    out_path.write_bytes(data)
-                    images.append(out_path)
-                if len(images) >= 5:
-                    break
+                    ext = base_img.get("ext", "png")
+                    out_path = tmp_dir / f"page{page.number+1}_img{img_idx}.{ext}"
+                    out_path.write_bytes(base_img["image"])
+                    result["image_paths"].append(out_path)
+                    image_count += 1
+            doc.close()
         except Exception as exc:
-            # don't fail text extraction because of image issues
-            raise PDFExtractionError(f"Failed to extract images: {exc}")
-    return full_text, images
+            logger.warning(f"Image extraction failed (continuing): {exc}")
+            result["errors"].append(f"Image extraction issue: {exc}")
+    else:
+        logger.info("pymupdf not installed → no images extracted")
+
+    result["success"] = bool(result["full_text"])
+    return result
+
+
+def cleanup_pdf_temp_dir(temp_dir: Optional[Path]) -> None:
+    """Safely remove temporary image directory."""
+    if temp_dir is None or not temp_dir.exists():
+        return
+    try:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        logger.debug(f"Cleaned temp dir: {temp_dir}")
+    except Exception as exc:
+        logger.warning(f"Failed to clean {temp_dir}: {exc}")
