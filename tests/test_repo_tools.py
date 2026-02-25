@@ -2,6 +2,11 @@ import os
 import tempfile
 from pathlib import Path
 import subprocess
+import sys
+
+# allow running the test directly by adding workspace src to path
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE.parent / "src"))
 
 import pytest
 

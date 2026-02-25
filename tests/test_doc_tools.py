@@ -1,5 +1,10 @@
 from pathlib import Path
 import tempfile
+import sys
+
+# ensure src package is importable during direct execution
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE.parent / "src"))
 
 import pytest
 
