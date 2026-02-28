@@ -55,7 +55,17 @@ This will:
 4. Pass opinions to the **Chief Justice Node** for final synthesis and resolution.
 5. Save the final Markdown verdict to `audit/report.md` (or the path you specified).
 
+### Using Docker (Containerized Runtime)
+
+For full isolation, you can build and run the auditor as a Docker container:
+
+```bash
+docker build -t automaton-auditor .
+docker run --rm --env-file .env -v $(pwd)/audit:/app/audit automaton-auditor --repo <github-repo-url> --pdf <path-to-pdf>
+```
+
 ## Project Structure
+
 
 - `src/state.py` – Pydantic/TypedDict definitions for state, evidence, opinions, and reports
 - `src/tools/` – sandboxed repo and PDF extraction tools
