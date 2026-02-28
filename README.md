@@ -1,15 +1,17 @@
 # automaton-auditor
 [![CI](https://github.com/ruthasoll/automaton-auditor/actions/workflows/ci.yml/badge.svg)](https://github.com/ruthasoll/automaton-auditor/actions/workflows/ci.yml)
 
-A Week 2 Automaton Auditor skeleton. Current branch implements Phase 1 & 2:
+A Week 2 Automaton Auditor skeleton. This repository implements Phase 1, 2, 3, and 4:
 - typed state models
 - safe forensic tools
-- detective nodes and partial graph orchestration
+- detective nodes and precise evidence extraction
+- parallel judge nodes with distinct personas (Prosecutor, Defense, TechLead)
+- deterministic Chief Justice synthesis engine
+- graph orchestration for the entire workflow
 
 ## Setup
 
-1. Clone the repository and create a Python 3.12 environment (``uv`` is used
-   throughout but any venv/conda works):
+1. Clone the repository and create a Python 3.12 environment (`uv` is used throughout but any venv/conda works):
 
    ```bash
    git clone <repo-url>
@@ -18,7 +20,7 @@ A Week 2 Automaton Auditor skeleton. Current branch implements Phase 1 & 2:
    uv install
    ```
 
-2. Copy ``.env.example`` to ``.env`` and populate API keys:
+2. Copy `.env.example` to `.env` and populate API keys:
 
    ```bash
    cp .env.example .env
@@ -37,39 +39,28 @@ A Week 2 Automaton Auditor skeleton. Current branch implements Phase 1 & 2:
    python -m pytest -q
    ```
 
-## Running the Detective Graph
+## Running the Automaton Auditor Swarm
 
-Phase 2 exposes a simple graph builder in ``src/graph.py``.  You can load and
-execute it like this:
+With all phases implemented, you can execute the full Digital Courtroom graph. Run the following command:
 
-```python
-from src.graph import build_detective_graph
-from src.state import AgentState
-
-g = build_detective_graph()
-state: AgentState = {
-    "repo_url": "https://github.com/example/repo.git",
-    "pdf_path": "reports/interim_report.pdf",
-    "rubric_dimensions": [],
-    "evidences": {},
-    "opinions": [],
-    "final_report": None,
-}
-print(g.run(state))
+```bash
+uv sync
+python src/graph.py --repo <github-repo-url> --pdf <path-to-pdf> --output audit/report.md
 ```
 
-This graph fans out to three detective nodes and then synchronises results at
-an ``EvidenceAggregator`` node. Judges and synthesis are planned for later
-phases.
+This will:
+1. Orchestrate the parallel **Detectives** to collect evidence.
+2. Synchronize findings via `EvidenceAggregator`.
+3. Fan-out to the **Judicial Layer** (`Prosecutor`, `Defense`, `TechLead`) where personas evaluate criteria in parallel.
+4. Pass opinions to the **Chief Justice Node** for final synthesis and resolution.
+5. Save the final Markdown verdict to `audit/report.md` (or the path you specified).
 
 ## Project Structure
 
-- ``src/state.py`` – Pydantic/TypedDict definitions for state and evidence
-- ``src/tools`` – sandboxed repo and PDF tools
-- ``src/nodes/detectives.py`` – detective agent functions
-- ``src/graph.py`` – graph builder used by tests
-- ``tests/`` – unit tests for Phase 1/2 functionality
-
-Additional deliverables (judges, justice, final reports, etc.) will appear in
-later phases.
-
+- `src/state.py` – Pydantic/TypedDict definitions for state, evidence, opinions, and reports
+- `src/tools/` – sandboxed repo and PDF extraction tools
+- `src/nodes/detectives.py` – forensic analyst nodes (`RepoInvestigator`, `DocAnalyst`)
+- `src/nodes/judges.py` – conflicting LLM personas (`Prosecutor`, `Defense`, `TechLead`)
+- `src/nodes/justice.py` – deterministic rules engine (`ChiefJusticeNode`)
+- `src/graph.py` – complete LangGraph builder and CLI entrypoint
+- `tests/` – unit tests for early phase functionality
