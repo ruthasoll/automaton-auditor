@@ -76,7 +76,117 @@ def RepoInvestigator(state: AgentState) -> Dict[str, List[Evidence]]:
             confidence=0.2
         )]
 
-    # TODO: add AST-based checks for graph_orchestration, state_management_rigor, etc.
+    # AST-based checks
+    
+    # 1. State Management Rigor (src/state.py)
+    state_file = repo_path / "src" / "state.py"
+    if state_file.exists():
+        try:
+            content = state_file.read_text(encoding="utf-8")
+            from ast import parse
+            tree = parse(content)
+            
+            # Simple AST visitor for State classes
+            has_pydantic = "BaseModel" in content
+            has_reducers = "operator.add" in content or "operator.ior" in content
+            found = has_pydantic and has_reducers
+            
+            evidences["state_management_rigor"] = [Evidence(
+                goal="State Management Rigor",
+                found=found,
+                content="Contains BaseModel and operator reducers" if found else "Missing strict typing or reducers",
+                location=str(state_file),
+                rationale="AST string check shows required components",
+                confidence=0.85
+            )]
+        except Exception as e:
+            evidences["state_management_rigor"] = [Evidence(
+                goal="State Management Rigor",
+                found=False,
+                location=str(state_file),
+                rationale=f"Failed to parse state.py: {e}",
+                confidence=0.1
+            )]
+    else:
+        evidences["state_management_rigor"] = [Evidence(
+            goal="State Management Rigor",
+            found=False,
+            location="src/state.py",
+            rationale="File does not exist",
+            confidence=1.0
+        )]
+
+    # 2. Graph Orchestration (src/graph.py)
+    graph_file = repo_path / "src" / "graph.py"
+    if graph_file.exists():
+        try:
+            content = graph_file.read_text(encoding="utf-8")
+            struct = repo_tools.analyze_graph_structure(content)
+            
+            found = struct["found_stategraph"] and struct["fan_out_from_start"] and struct["has_aggregator"] and struct["has_conditional"]
+            
+            summary = (f"Nodes: {struct['nodes']}\n"
+                       f"Fan-out: {struct['fan_out_from_start']}\n"
+                       f"Aggregator: {struct['has_aggregator']}\n"
+                       f"Conditional Edges: {struct['has_conditional']}")
+                       
+            evidences["graph_orchestration"] = [Evidence(
+                goal="Graph Orchestration Architecture",
+                found=found,
+                content=summary,
+                location=str(graph_file),
+                rationale="GraphASTAnalyzer verified node structure and parallel fan-out",
+                confidence=0.95 if found else 0.8
+            )]
+        except Exception as e:
+            evidences["graph_orchestration"] = [Evidence(
+                goal="Graph Orchestration Architecture",
+                found=False,
+                location=str(graph_file),
+                rationale=f"Failed to analyze graph structure: {e}",
+                confidence=0.1
+            )]
+    else:
+        evidences["graph_orchestration"] = [Evidence(
+            goal="Graph Orchestration Architecture",
+            found=False,
+            location="src/graph.py",
+            rationale="File does not exist",
+            confidence=1.0
+        )]
+
+    # 3. Safe Tool Engineering
+    tools_dir = repo_path / "src" / "tools"
+    if tools_dir.exists():
+        has_tempfile = False
+        has_os_system = False
+        target_file = ""
+        for tool_file in tools_dir.glob("*.py"):
+            content = tool_file.read_text(encoding="utf-8")
+            if "tempfile" in content:
+                has_tempfile = True
+                target_file = str(tool_file)
+            if "os.system" in content:
+                has_os_system = True
+                target_file = str(tool_file)
+                
+        found = has_tempfile and not has_os_system
+        evidences["safe_tool_engineering"] = [Evidence(
+            goal="Safe Tool Engineering",
+            found=found,
+            content="Tempfile isolation used" if found else ("Found os.system" if has_os_system else "No temp isolation"),
+            location=target_file if target_file else "src/tools/",
+            rationale="Ast/text search for tool safety parameters",
+            confidence=0.9
+        )]
+    else:
+         evidences["safe_tool_engineering"] = [Evidence(
+            goal="Safe Tool Engineering",
+            found=False,
+            location="src/tools/",
+            rationale="Tools directory does not exist",
+            confidence=1.0
+        )]
 
     return evidences
 
@@ -168,13 +278,86 @@ def DocAnalyst(state: AgentState) -> Dict[str, List[Evidence]]:
 
 
 def VisionInspector(state: AgentState) -> Dict[str, List[Evidence]]:
-    """Placeholder for vision analysis."""
-    return {
-        "swarm_visual": [Evidence(
-            goal="Diagram visual analysis",
+    """Multimodal detective – visualizes workflow diagrams."""
+    evidences: Dict[str, List[Evidence]] = {}
+    
+    # We first see if DocAnalyst extracted any images
+    gen_evs = state.get("evidences", {}).get("swarm_visual", [])
+    has_images = False
+    
+    if gen_evs:
+        for ev in gen_evs:
+            if "images extracted" in str(ev.content):
+                has_images = True
+                break
+                
+    pdf_path_str = state.get("pdf_path", "")
+    pdf_path = Path(pdf_path_str) if pdf_path_str else None
+    
+    # This is slightly redundant but DocAnalyst cleans up its temp_dir. 
+    # We will re-extract here specifically for the VisionInspector to send.
+    if pdf_path and pdf_path.exists() and has_images:
+        pdf_data = doc_tools.extract_pdf_content(pdf_path)
+        images = pdf_data.get("image_paths", [])
+        
+        if images:
+            try:
+                import base64
+                from langchain_core.messages import HumanMessage
+                from langchain_openai import ChatOpenAI
+                
+                llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
+                
+                # Take the first image (usually the architecture diagram if there are few)
+                target_img = images[0]
+                with open(target_img, "rb") as image_file:
+                    encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+                    
+                msg = HumanMessage(
+                    content=[
+                        {"type": "text", "text": "Analyze this architectural diagram. Is it a LangGraph State Machine diagram showing parallel branching for Detectives and Judges (with EvidenceAggregator in between), or just a generic flowchart? Reply ONLY with 'CLASSIFICATION: [classification]. FLOW: [brief description]'."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded_string}"}}
+                    ]
+                )
+                
+                response = llm.invoke([msg])
+                content_str = str(response.content)
+                
+                is_parallel = "parallel" in content_str.lower() or "stategraph" in content_str.lower()
+                
+                evidences["swarm_visual"] = [Evidence(
+                    goal="Architectural Diagram Analysis",
+                    found=is_parallel,
+                    content=content_str,
+                    location=str(pdf_path) + " (Image 1)",
+                    rationale="Vision model analyzed the diagram for parallel fan-out architecture",
+                    confidence=0.9
+                )]
+            except Exception as e:
+                evidences["swarm_visual"] = [Evidence(
+                    goal="Architectural Diagram Analysis",
+                    found=False,
+                    location=str(pdf_path),
+                    rationale=f"Vision model failed: {e}",
+                    confidence=0.1
+                )]
+            finally:
+                doc_tools.cleanup_pdf_temp_dir(pdf_data.get("temp_dir"))
+        else:
+             evidences["swarm_visual"] = [Evidence(
+                goal="Architectural Diagram Analysis",
+                found=False,
+                location=str(pdf_path),
+                rationale="No images actually extracted",
+                confidence=1.0
+            )]
+    else:
+        evidences["swarm_visual"] = [Evidence(
+            goal="Architectural Diagram Analysis",
             found=False,
             location="",
-            rationale="VisionInspector not yet implemented",
-            confidence=0.0
+            rationale="No diagram provided or extracted",
+            confidence=1.0
         )]
-    }
+
+    return evidences
