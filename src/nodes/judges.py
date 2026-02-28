@@ -1,6 +1,9 @@
 import json
+import os
+import time
 from typing import Dict, List, Any
-from langchain_openai import ChatOpenAI
+# from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -56,7 +59,12 @@ def _format_evidence(dim_id: str, state: AgentState) -> str:
     return "\n".join(lines)
 
 def _run_judge(state: AgentState, role_name: str, sys_prompt: str) -> Dict[str, List[JudicialOpinion]]:
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.5).with_structured_output(JudicialOpinion)
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",   # Currently active Groq model
+        temperature=0.6,
+        max_tokens=1000,
+        api_key=os.getenv("GROQ_API_KEY")  # reads from .env
+    ).with_structured_output(JudicialOpinion)
     
     rubric_dims = state.get("rubric_dimensions", [])
     if not rubric_dims:
@@ -88,8 +96,8 @@ Your 'judge' field MUST be '{role_name}'.
 Your 'criterion_id' field MUST be '{dim_id}'.
 """
         
-        # Retry logic is handled natively by some LangChain versions, but we can do a simple loop if it fails
-        max_retries = 2
+        # Retry with exponential backoff for rate limits
+        max_retries = 3
         for attempt in range(max_retries):
             try:
                 op = llm.invoke([
@@ -102,15 +110,30 @@ Your 'criterion_id' field MUST be '{dim_id}'.
                 opinions.append(op)
                 break
             except Exception as e:
-                if attempt == max_retries - 1:
-                    # Fallback on failure
-                    opinions.append(JudicialOpinion(
-                        judge=role_name, # type: ignore
-                        criterion_id=dim_id,
-                        score=3,
-                        argument=f"Failed to generate structured opinion due to parser error: {e}",
-                        cited_evidence=[]
-                    ))
+                err_str = str(e)
+                if "rate_limit" in err_str or "429" in err_str:
+                    wait_time = 10 * (attempt + 1)  # 10s, 20s, 30s
+                    print(f"  [{role_name}] Rate limited on {dim_id}, waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                    if attempt == max_retries - 1:
+                        opinions.append(JudicialOpinion(
+                            judge=role_name, # type: ignore
+                            criterion_id=dim_id,
+                            score=3,
+                            argument=f"Rate limit exceeded after {max_retries} retries: {e}",
+                            cited_evidence=[]
+                        ))
+                else:
+                    if attempt == max_retries - 1:
+                        opinions.append(JudicialOpinion(
+                            judge=role_name, # type: ignore
+                            criterion_id=dim_id,
+                            score=3,
+                            argument=f"Failed to generate opinion: {e}",
+                            cited_evidence=[]
+                        ))
+        # Throttle between dimensions to avoid rate limits
+        time.sleep(5)
                     
     return {"opinions": opinions}
 
