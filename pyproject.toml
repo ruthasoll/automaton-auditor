@@ -8,6 +8,7 @@ dependencies = [
     "gitpython>=3.1.46",
     "langchain>=1.2.10",
     "langchain-core>=1.2.15",
+    "langchain-groq>=1.1.2",
     "langchain-openai>=1.1.10",
     "langgraph>=1.0.9",
     "langsmith>=0.7.6",
@@ -15,6 +16,7 @@ dependencies = [
     "pymupdf>=1.27.1",
     "pypdf>=6.7.3",
     "python-dotenv>=1.2.1",
+    "reportlab>=4.4.10",
 ]
 
 [dependency-groups]

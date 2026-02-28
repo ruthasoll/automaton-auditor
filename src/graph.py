@@ -150,7 +150,13 @@ if __name__ == "__main__":
     # Here we just execute the graph.
     
     try:
-        final_state = graph.invoke(initial_state)
+        final_state = graph.invoke(initial_state, {"recursion_limit": 50})
         print(f"Audit complete. Report generated at audit/report.md")
+        if final_state:
+             print("Final State keys:", final_state.keys())
+             if "final_report" in final_state:
+                 print("Final report exists:", final_state["final_report"] is not None)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Audit execution encountered an error: {e}")
